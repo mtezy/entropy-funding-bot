@@ -129,6 +129,8 @@ python3 status.py --key-file wallet.key
 | `setup_builder.py` | Builder fee approval + referral code setup. |
 | `hl_client.py` | Library: EIP-712 signing, orders, positions, builder fees. |
 | `config.py` | Referral code + gate. Single source of truth. |
+| `fees.py` | The real fee model: HIP-3 2x, growth mode 0.1x, self-rebate tiers. |
+| `volume_planner.py` | Capital -> achievable volume, per market type and tier. |
 | `funding_arb.py` | Simpler snapshot scanner (reference). |
 | `scan_markets.py` | 340-market MM scan (result: not viable). |
 | `deepdive.py` | Tick size, ticks-in-spread, flow stats. |
@@ -136,7 +138,23 @@ python3 status.py --key-file wallet.key
 | `mm_anth.py` | Market maker — works, but not deployed. See FINDINGS §5. |
 
 Docs: [GUIDE.md](GUIDE.md) operator guide · [REFERRAL.md](REFERRAL.md) monetization ·
-[FINDINGS.md](FINDINGS.md) full analysis with every raw number.
+[VOLUME.md](VOLUME.md) volume economics · [FINDINGS.md](FINDINGS.md) full analysis.
+
+## Volume economics in one line
+
+Total volume = capital / net fee rate. Leverage is irrelevant.
+
+```
+growth mode maker, OG tier     0.120 bps   ->  $83,333 volume per $1
+HIP-3 normal taker, Tier 1     6.300 bps   ->   $1,587 volume per $1
+```
+
+$15 of capital reaches **$1.25M** of volume in growth-mode markets at OG tier, or $24k on a
+normal market.
+
+```bash
+python3 volume_planner.py --capital 15 --target 1000000
+```
 
 ---
 

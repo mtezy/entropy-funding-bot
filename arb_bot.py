@@ -43,13 +43,34 @@ import sys
 import time
 
 from hl_client import HL
+import fees as feemodel
 
 HOURS_YEAR = 24 * 365
-MAKER_BPS = 1.5
-TAKER_BPS = 4.5
 
 
 # ---------------------------------------------------------------- market data
+_FEE_CACHE = {}
+
+
+def market_fee_flags(hl, coin):
+    """(growth_mode: bool, deployer_fee_scale: float) for a coin. Cached per run."""
+    if coin in _FEE_CACHE:
+        return _FEE_CACHE[coin]
+    dex = coin.split(":")[0] if ":" in coin else ""
+    try:
+        m = hl.meta(dex)
+        for a in m.get("universe", []):
+            if a.get("name") == coin:
+                res = (a.get("growthMode") == "enabled",
+                       float(a.get("deployerFeeScale", 1.0)))
+                _FEE_CACHE[coin] = res
+                return res
+    except Exception:
+        pass
+    _FEE_CACHE[coin] = (False, 1.0)
+    return _FEE_CACHE[coin]
+
+
 def leg_stats(hl, coin, hours=168):
     """Current funding + historical series for one leg."""
     dex = coin.split(":")[0] if ":" in coin else ""
@@ -110,7 +131,7 @@ def pair_metrics(L, S):
 # ------------------------------------------------------------------ risk model
 class Risk:
     def __init__(self, notional, lev, max_basis, basis_exit, max_hours,
-                 max_dd_usd, builder_bps=0.0):
+                 max_dd_usd, builder_bps=0.0, tier="tier1"):
         self.notional = notional
         self.lev = lev
         self.max_basis = max_basis
@@ -118,11 +139,25 @@ class Risk:
         self.max_hours = max_hours
         self.max_dd = max_dd_usd
         self.builder_bps = builder_bps
-        self.entry_cost_bps = 4 * TAKER_BPS + 4 * builder_bps
+        self.tier = tier
+        self.entry_cost_bps = None      # set per-pair by set_pair_fees()
         self.halted = False
 
+    def set_pair_fees(self, dexes, growth_flags, dfs=None):
+        """Entry cost must be computed from the actual markets being traded."""
+        dfs = dfs or [1.0] * len(dexes)
+        total = 0.0
+        for dex, gm, d in zip(dexes, growth_flags, dfs):
+            total += feemodel.round_trip_bps(
+                maker=False, dex=dex, growth_mode=gm,
+                deployer_fee_scale=d, tier=self.tier, legs=1)
+        self.entry_cost_bps = total + 4 * self.builder_bps
+        return self.entry_cost_bps
+
     def payback_hours(self, bps_hr):
-        return self.entry_cost_bps / bps_hr if bps_hr > 0 else float("inf")
+        if not self.entry_cost_bps or bps_hr <= 0:
+            return float("inf")
+        return self.entry_cost_bps / bps_hr
 
     def can_enter(self, m, notional):
         reasons = []
@@ -157,6 +192,8 @@ def main():
     ap.add_argument("--builder-fee", type=int, default=None,
                     help="fee in tenths of a bp (10 = 1bp, max 100 = 10bps)")
     ap.add_argument("--live", action="store_true")
+    ap.add_argument("--tier", default="tier1", choices=["tier1", "og", "pref", "part"],
+                    help="Entropy self-rebate tier: tier1 60%%, og 120%%, pref 160%%, part 200%%")
     ap.add_argument("--key-file", default=None)
     ap.add_argument("--i-used-referral", action="store_true",
                     help="confirm the account was created through the referral link")
@@ -185,15 +222,13 @@ def main():
 
     builder_bps = (args.builder_fee / 10.0) if args.builder_fee else 0.0
     risk = Risk(args.notional, args.lev, args.max_basis, args.basis_exit,
-                args.max_hours, args.max_dd_usd, builder_bps)
+                args.max_hours, args.max_dd_usd, builder_bps, tier=args.tier)
 
     mode = "LIVE" if args.live else "DRY"
     print(f"\n[{mode}] notional ${args.notional:,.0f}/leg  lev {args.lev}x  "
           f"addr {hl.address or '-'}")
     if args.builder:
         print(f"       builder {args.builder} @ {builder_bps:.1f} bps")
-    print(f"       entry cost ~{risk.entry_cost_bps:.1f} bps "
-          f"(4 taker fills{', incl builder' if builder_bps else ''})")
 
     # ---- pair selection ----
     if args.auto:
@@ -215,7 +250,21 @@ def main():
     lev = min(args.lev, lev_l, lev_s)
     print(f"       LONG  {args.long_coin} (id={aid_l}, sz={szd_l}, max {lev_l}x)")
     print(f"       SHORT {args.short_coin} (id={aid_s}, sz={szd_s}, max {lev_s}x)")
-    print(f"       using {lev}x isolated\n")
+    print(f"       using {lev}x isolated")
+
+    # ---- real entry cost, from the actual markets being traded ----
+    gm_l, dfs_l = market_fee_flags(hl, args.long_coin)
+    gm_s, dfs_s = market_fee_flags(hl, args.short_coin)
+    risk.set_pair_fees(
+        dexes=[args.long_coin.split(":")[0] if ":" in args.long_coin else "",
+               args.short_coin.split(":")[0] if ":" in args.short_coin else ""],
+        growth_flags=[gm_l, gm_s],
+        dfs=[dfs_l, dfs_s],
+    )
+    gm_txt = "growth mode" if (gm_l and gm_s) else ("mixed" if (gm_l or gm_s) else "normal HIP-3")
+    print(f"       entry cost {risk.entry_cost_bps:.2f} bps "
+          f"(4 taker fills, {gm_txt}, tier {risk.tier}"
+          f"{', incl builder' if builder_bps else ''})\n")
 
     stop = {"flag": False}
     signal.signal(signal.SIGINT, lambda *a: stop.update(flag=True))

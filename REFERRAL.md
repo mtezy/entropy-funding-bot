@@ -170,15 +170,16 @@ catch. A user holding a week does one round trip a week. Your revenue scales wit
 
 ### Choosing `f`
 
-The carry is ~1.49 bps/hr ≈ 35.8 bps/day. Entry cost at `f = 0` is 18 bps.
+The carry is ~1.49 bps/hr ≈ 35.8 bps/day. Entry cost at `f = 0` is **2.52 bps** in growth-mode
+markets (9.0 bps per fill x 4 fills, minus the 60% Tier 1 rebate on Entropy's half).
 
 | `f` | entry cost | payback | verdict |
 |---|---|---|---|
-| 0 | 18.0 bps | 12.1 h | best for the user, no revenue |
-| 10 | 22.0 bps | 14.8 h | **sweet spot** — 1 bp, barely dents the edge |
-| 25 | 28.0 bps | 18.8 h | still fine, 2.5× the revenue |
-| 50 | 38.0 bps | 25.5 h | aggressive; users feel it |
-| 100 | 58.0 bps | 38.9 h | max cap; kills most of the edge |
+| 0 | 2.52 bps | 1.7 h | best for the user, no revenue |
+| 10 | 6.52 bps | 4.4 h | **sweet spot** — 1 bp, barely dents the edge |
+| 25 | 12.52 bps | 8.4 h | still fine, 2.5× the revenue |
+| 50 | 22.52 bps | 15.1 h | aggressive; users feel it |
+| 100 | 42.52 bps | 28.5 h | max cap; kills most of the edge |
 
 **Recommendation: `f = 10` to launch, `f = 25` once you have retention.** At 1 bp the user barely
 notices and your revenue is real. At 10 bps the strategy stops being worth running and you lose the
@@ -252,7 +253,7 @@ The bot's credibility comes from numbers you can show, not claims. Lead with the
 
 **The measured edge**
 > UNITREE funding differential, 168 hours live: +1.491 bps/hr average, 77% of hours positive,
-> 94% of 24-hour windows profitable. Entry cost 18 bps, payback 12 hours.
+> 94% of 24-hour windows profitable. Entry cost 2.52 bps in growth-mode markets, payback 1.7 hours.
 
 **The honest downside**
 > Worst 24-hour window over the last week: −9.8 bps. With entry cost, a bad short hold is about

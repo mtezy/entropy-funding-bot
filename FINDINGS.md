@@ -193,8 +193,8 @@ positive hours           77%  of 168
 24h windows negative     6%   of 144
 worst 24h window         -9.8 bps
 best 24h window          +87.4 bps
-entry + exit cost        ~18 bps (4 taker fills)
-payback                  12.1 hours
+entry + exit cost        2.52 bps (4 taker fills, growth mode, Tier 1 rebate)
+payback                  1.7 hours
 ```
 
 Current snapshot at time of writing (higher than the mean — this is what a snapshot scanner would
@@ -253,7 +253,7 @@ builder field        f:10 present in order action, signature valid  PASS
 approveBuilderFee    maxFeeRate "0.1000%" for 10 bps                PASS
 asset id resolution  io:ANTH -> 200001, para:UNITREE -> 200019      PASS
 scanner              15 dual-listed assets, 2 pass filters          PASS
-arb_bot --auto       selects UNITREE, 131% APR, 77% persist, 12.1h  PASS
+arb_bot --auto       selects UNITREE, 133% APR, 78% persist, 1.7h   PASS
 arb_bot dry          enters/exits on thresholds, no orders sent     PASS
 preflight --auto     all 10 checks, correctly blocks on $0 equity   PASS
 status --all         reads positions, carry now vs 168h mean        PASS

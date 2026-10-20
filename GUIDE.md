@@ -62,15 +62,15 @@ positive hours           77%  of 168
 24h windows negative     6%   of 144
 worst 24h window         -9.8 bps
 best 24h window          +87.4 bps
-entry + exit cost        ~18 bps (4 taker fills)
-payback                  12.1 hours
+entry + exit cost        2.52 bps (4 taker fills, growth mode, Tier 1)
+payback                  1.7 hours
 ```
 
 Read that honestly:
 
 - **94% of 24-hour holds were profitable.**
-- The worst 24h window lost 9.8 bps. Add 18 bps of entry/exit and the realistic bad case on a
-  short hold is about **-28 bps**.
+- The worst 24h window lost 9.8 bps. Add 2.52 bps of entry/exit and the realistic bad case on a
+  short hold is about **-12 bps**.
 - You need to hold roughly **12 hours** to clear the entry cost. Anything shorter is a coin flip
   weighted against you.
 
@@ -169,7 +169,7 @@ python3 preflight.py --auto --key-file wallet.key --notional 1000
 
   [OK ] carry (168h mean)              +1.491 bps/hr = +131% APR   (min 80%)
   [OK ] persistence                    77% of 168h same sign   (min 75%)
-  [OK ] payback                        12.1h to recover 18 bps entry cost
+  [OK ] payback                        1.7h to recover 2.52 bps entry cost
   [OK ] worst 24h window               -9.8 bps   (this is your bad case)
   [OK ] volatility                     stdev 1.98 bps/hr
   [OK ] basis                          -12.4 bps   (entry blocked above 40)
@@ -222,9 +222,9 @@ selected UNITREE: LONG para:UNITREE / SHORT xyz:UNITREE  (+131% APR, persist 77%
        SHORT xyz:UNITREE (id=200104, sz=2, max 10x)
        using 3x isolated
 
-[out] carry=+1.491b/hr (+131% APR) persist=77% sd=1.98 basis=-12.2b worst24h=-9.8b cap=$1,831,582 payback=12.1h
-       >>> ENTER  (apr +131%, persist 77%, payback 12.1h)
-[IN ] carry=+1.491b/hr (+131% APR) persist=77% sd=1.98 basis=-13.0b worst24h=-9.8b cap=$1,830,749 payback=12.1h
+[out] carry=+1.491b/hr (+131% APR) persist=77% sd=1.98 basis=-12.2b worst24h=-9.8b cap=$1,831,582 payback=1.7h
+       >>> ENTER  (apr +131%, persist 77%, payback 1.7h)
+[IN ] carry=+1.491b/hr (+131% APR) persist=77% sd=1.98 basis=-13.0b worst24h=-9.8b cap=$1,830,749 payback=1.7h
 ```
 
 What to check before going live:
@@ -270,7 +270,7 @@ On entry the bot:
 4. Reports the delta between legs
 
 ```
-       >>> ENTER  (apr +131%, persist 77%, payback 12.1h)
+       >>> ENTER  (apr +131%, persist 77%, payback 1.7h)
        long : {"status":"ok",...}
        short: {"status":"ok",...}
        filled long +12.96 short -12.94 delta +0.02
@@ -401,14 +401,21 @@ can be left with one leg. Run on a stable VPS. This is the single most likely wa
 are harvesting. The 25%-of-OI cap exists for this reason.
 
 **5. Entry cost.**
-Four taker fills ≈ 18 bps. At 1.49 bps/hr that is a 12-hour payback. **This is a multi-day position,
-not a scalp.** Opening and closing every hour guarantees a loss.
+Four taker fills cost 2.52 bps in growth-mode markets (9.0 bps without growth mode, 36 bps if you
+are not on Entropy at all and pay the full HIP-3 2x). At 1.49 bps/hr that is a 1.7-hour payback in
+growth mode and a 24-hour payback on a normal HIP-3 market. Check the `entry cost` line the bot
+prints before you trust any payback number.
 
 **6. It is not free money.**
 131% APR is on **notional**, not on the margin you post. $1,000 notional at 3x uses ~$667 of margin
 across both legs, so the return on capital is roughly 131% × (1000/667) ≈ 196% APR — but the absolute
 number is about **$3.60/day per $1,000 notional**. Real, modest, and it scales only as far as
 capacity allows.
+
+**7. Fees are not what the exchange API says.**
+`POST /info userFees` returns the **main-dex** rate (1.5/4.5 bps). HIP-3 markets charge **2x** that
+(3.0/9.0), and growth-mode markets charge **0.1x** (0.30/0.90). The bot reads `growthMode` and
+`deployerFeeScale` per market and computes the real number — see `fees.py`. Never hardcode 4.5 bps.
 
 ---
 
