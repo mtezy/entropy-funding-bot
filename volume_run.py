@@ -122,6 +122,7 @@ class Runner:
         self.oids = {"buy": None, "sell": None}
         self.last_px = {"buy": None, "sell": None}
         self.started = time.time()
+        self.err_streak = 0
 
     # ---- state
     def position(self):
@@ -207,6 +208,18 @@ class Runner:
                         print(f"  {side} rejected: {st['error']}")
                 except Exception:
                     print(f"  {side} response: {r}")
+                if isinstance(r, dict) and r.get("status") == "err":
+                    self.err_streak += 1
+                    msg = str(r.get("response", ""))[:120]
+                    print(f"  {side} REJECTED: {msg}")
+                    if r.get("_diagnosis"):
+                        print(f"  -> {r['_diagnosis']}")
+                    if self.err_streak >= 3:
+                        print("\n  3 rejections in a row — stopping so you can fix this.\n")
+                        STOP["flag"] = True
+                        return
+                else:
+                    self.err_streak = 0
                 self.oids[side] = oid
             else:
                 self.oids[side] = -1

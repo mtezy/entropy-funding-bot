@@ -178,9 +178,34 @@ class HL:
         return float(self.user_state(dex).get("withdrawable", 0) or 0)
 
     # --------------------------------------------------------------- signing
-    def _sign(self, action):
+    def _action_hash(self, action, nonce, vault_address=None, expires_after=None):
+        """
+        Hyperliquid's action hash. NOT just the msgpack of the action.
+
+        keccak( msgpack(action)
+                + nonce as 8-byte big-endian
+                + 0x00 (no vault) | 0x01 + 20-byte vault address
+                + [0x00 + expiresAfter as 8-byte big-endian, if set] )
+
+        Omitting the nonce here makes every signature unrecoverable: the exchange
+        computes a different hash, recovers a random address, and rejects with
+        "User or API Wallet 0x... does not exist" — a different 0x every call.
+        """
         data = msgpack.packb(action, use_bin_type=True)
-        connection_id = "0x" + keccak(data).hex()
+        data += int(nonce).to_bytes(8, "big")
+        if vault_address is None:
+            data += b"\x00"
+        else:
+            data += b"\x01"
+            data += bytes.fromhex(vault_address[2:].lower())
+        if expires_after is not None:
+            data += b"\x00"
+            data += int(expires_after).to_bytes(8, "big")
+        return keccak(data)
+
+    def _sign(self, action, nonce, vault_address=None, expires_after=None):
+        connection_id = "0x" + self._action_hash(
+            action, nonce, vault_address, expires_after).hex()
         typed = {
             "types": AGENT_TYPES,
             "primaryType": "Agent",
@@ -189,27 +214,68 @@ class HL:
                         "connectionId": connection_id},
         }
         signed = self.acct.sign_message(encode_typed_data(full_message=typed))
+        v = signed.v
+        if v in (0, 1):
+            v += 27
         return {
             "r": "0x" + signed.r.to_bytes(32, "big").hex(),
             "s": "0x" + signed.s.to_bytes(32, "big").hex(),
-            "v": signed.v,
+            "v": v,
         }
+
+    def recover_signer(self, action, nonce, signature, vault_address=None,
+                       expires_after=None):
+        """
+        Recover the address the exchange will see. Use this to prove a signature
+        is valid BEFORE sending — it is the only cheap way to catch a signing bug.
+        """
+        connection_id = "0x" + self._action_hash(
+            action, nonce, vault_address, expires_after).hex()
+        typed = {
+            "types": AGENT_TYPES,
+            "primaryType": "Agent",
+            "domain": DOMAIN,
+            "message": {"source": "a" if self.mainnet else "b",
+                        "connectionId": connection_id},
+        }
+        return Account.recover_message(
+            encode_typed_data(full_message=typed),
+            vrs=[signature["v"], int(signature["r"], 16), int(signature["s"], 16)],
+        )
 
     def post_action(self, action, dry=False):
         nonce = int(time.time() * 1000)
         if dry or not self.acct:
             return {"dry": True, "action": action, "nonce": nonce}
+        sig = self._sign(action, nonce)
         body = {
             "action": action,
             "nonce": nonce,
-            "signature": self._sign(action),
+            "signature": sig,
             "vaultAddress": None,
         }
         r = self.s.post(EXCHANGE_URL, json=body, timeout=self.timeout)
         try:
-            return r.json()
+            out = r.json()
         except Exception:
             return {"status": "parse_error", "code": r.status_code, "text": r.text[:400]}
+        # a signing fault shows up as a recovered address that is not ours
+        if isinstance(out, dict) and out.get("status") == "err":
+            msg = str(out.get("response", ""))
+            if "does not exist" in msg:
+                got = self.recover_signer(action, nonce, sig)
+                if got.lower() != self.address.lower():
+                    out["_diagnosis"] = (
+                        f"SIGNING BUG: signature recovers to {got} but should be "
+                        f"{self.address}. Fix the action hash, not the account."
+                    )
+                else:
+                    out["_diagnosis"] = (
+                        f"Signature is correct (recovers to {self.address}). "
+                        f"This wallet has never deposited to Hyperliquid — "
+                        f"fund it before trading."
+                    )
+        return out
 
     # ---------------------------------------------------------------- orders
     def _builder_field(self):
@@ -378,7 +444,12 @@ class HL:
             portfolioMargin cross-margin portfolio across the whole account.
         """
         try:
-            return self.info({"type": "userAbstraction", "user": self.address})
+            m = self.info({"type": "userAbstraction", "user": self.address})
+            # the API answers "default" for wallets that never set a mode,
+            # which behaves exactly like per-dex collateral
+            if m in (None, "default"):
+                return "disabled"
+            return m
         except Exception:
             return "disabled"
 

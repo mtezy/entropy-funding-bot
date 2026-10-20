@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 import fees as F
 
@@ -37,6 +38,7 @@ def main():
     print("\n=== DOCTOR ===\n")
     problems = []
 
+    problems = []
     # ---- 1. python deps ----
     missing = []
     for mod in ("requests", "msgpack", "eth_account", "eth_utils"):
@@ -106,6 +108,25 @@ def main():
         line(BAD, "key derives", str(e)[:80])
         return 1
     line(OK, "wallet address", hl.address)
+
+    # ---- signing self-test: the failure that costs the most time ----
+    try:
+        probe = {"type": "order", "orders": [{"a": 0, "b": True, "p": "1", "s": "1",
+                                              "r": False, "t": {"limit": {"tif": "Alo"}}}],
+                 "grouping": "na"}
+        n = int(time.time() * 1000)
+        sig = hl._sign(probe, n)
+        got = hl.recover_signer(probe, n, sig)
+        if got.lower() == hl.address.lower():
+            line(OK, "signing", "recovers to your address")
+        else:
+            line(BAD, "signing", f"recovers to {got[:10]}... NOT your address")
+            problems.append("signing bug: the action hash does not match the "
+                            "signed message. Orders will be rejected with "
+                            "'User or API Wallet 0x... does not exist'.")
+    except Exception as e:
+        line(BAD, "signing", str(e)[:70])
+        problems.append("signing self-test failed")
 
     return _diagnose(hl, args, key)
 
