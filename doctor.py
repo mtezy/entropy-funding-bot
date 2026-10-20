@@ -181,7 +181,7 @@ def _diagnose(hl, args, key):
             names = [a["name"] for a in meta["universe"]][:10]
             print(f"       did you mean one of: {', '.join(names)}")
             return 1
-        aid = (200000 if dex else 0) + idx
+        aid = hl.asset_id(dex, idx)
         szd = asset["szDecimals"]
         mlev = asset["maxLeverage"]
         gm = asset.get("growthMode") == "enabled"

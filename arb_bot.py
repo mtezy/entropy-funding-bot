@@ -99,7 +99,7 @@ def resolve(hl, coin):
     meta = hl.meta(dex)
     for i, a in enumerate(meta["universe"]):
         if a["name"] == coin:
-            return (200000 + i) if dex else i, a["szDecimals"], a["maxLeverage"]
+            return hl.asset_id(dex, i), a["szDecimals"], a["maxLeverage"]
     raise SystemExit(f"{coin} not found")
 
 
@@ -245,6 +245,8 @@ def main():
               f"({best['net_apr']:+.0f}% APR, persist {best['persistence']*100:.0f}%, "
               f"cap ${best['cap_usd']:,.0f})")
 
+    dex_l = args.long_coin.split(":")[0] if ":" in args.long_coin else ""
+    dex_s = args.short_coin.split(":")[0] if ":" in args.short_coin else ""
     aid_l, szd_l, lev_l = resolve(hl, args.long_coin)
     aid_s, szd_s, lev_s = resolve(hl, args.short_coin)
     lev = min(args.lev, lev_l, lev_s)
@@ -273,6 +275,14 @@ def main():
     opened_at = None
     entry_equity = None
 
+    # Under unifiedAccount the per-dex accountValue reads 0 while the money sits
+    # on spot, so every equity check must use spendable(), not account_value().
+    def equity():
+        try:
+            return min(hl.spendable(dex_l), hl.spendable(dex_s))
+        except Exception:
+            return hl.account_value()
+
     # ---- recover state: never stack a second position on an existing one ----
     if args.live:
         try:
@@ -283,7 +293,7 @@ def main():
             if szi_l != 0 or szi_s != 0:
                 in_pos = True
                 opened_at = time.time()
-                entry_equity = hl.account_value()
+                entry_equity = equity()
                 print(f"RECOVER: existing position long={szi_l:+.4f} short={szi_s:+.4f} "
                       f"delta={szi_l + szi_s:+.4f}")
                 print("         will NOT open a new one. Monitoring + exit only.")
@@ -330,10 +340,17 @@ def main():
                 if args.live:
                     qty_l = round(args.notional / L["mid"], szd_l)
                     qty_s = round(args.notional / S["mid"], szd_s)
-                    eq = hl.account_value()
+                    eq = equity()
                     need = (args.notional / lev) * 2 * 1.2
                     if eq < need:
-                        print(f"       ABORT: equity ${eq:,.0f} < needed ${need:,.0f}")
+                        mode = hl.abstraction()
+                        print(f"       ABORT: spendable ${eq:,.2f} < needed ${need:,.2f} "
+                              f"({mode})")
+                        if mode in ("unifiedAccount", "portfolioMargin"):
+                            print(f"       spot backs every dex — deposit, or lower "
+                                  f"--notional to ${eq * lev / 2 / 1.2:,.2f}")
+                        else:
+                            print(f"       move USDC to '{dex_l}' / '{dex_s}' with fund_dex.py")
                         if args.poll <= 0:
                             return 1
                         time.sleep(args.poll)
@@ -345,8 +362,10 @@ def main():
                     time.sleep(0.5)
 
                     # fire both legs as marketable IOC so they land together
-                    r1 = hl.order(aid_l, True, L["mid"] * 1.004, qty_l, tif="Ioc")
-                    r2 = hl.order(aid_s, False, S["mid"] * 0.996, qty_s, tif="Ioc")
+                    r1 = hl.order(aid_l, True, L["mid"] * 1.004, qty_l,
+                                  tif="Ioc", szd=szd_l)
+                    r2 = hl.order(aid_s, False, S["mid"] * 0.996, qty_s,
+                                  tif="Ioc", szd=szd_s)
                     print(f"       long : {json.dumps(r1)[:140]}")
                     print(f"       short: {json.dumps(r2)[:140]}")
 
@@ -357,15 +376,15 @@ def main():
                               f"(want {qty_l}/{-qty_s}) — unwinding")
                         if got_l:
                             hl.order(aid_l, False, L["mid"] * 0.99, abs(got_l),
-                                     tif="Ioc", reduce_only=True)
+                                     tif="Ioc", reduce_only=True, szd=szd_l)
                         if got_s:
                             hl.order(aid_s, True, S["mid"] * 1.01, abs(got_s),
-                                     tif="Ioc", reduce_only=True)
+                                     tif="Ioc", reduce_only=True, szd=szd_s)
                         time.sleep(args.poll)
                         continue
                     print(f"       filled long {got_l:+.4f} short {got_s:+.4f} "
                           f"delta {got_l + got_s:+.4f}")
-                    entry_equity = hl.account_value()
+                    entry_equity = equity()
                 in_pos = True
                 opened_at = time.time()
 
@@ -383,7 +402,7 @@ def main():
                 why = f"max hours {hours:.1f}"
 
             if args.live and entry_equity is not None and args.max_dd_usd > 0:
-                dd = entry_equity - hl.account_value()
+                dd = entry_equity - equity()
                 if dd > args.max_dd_usd:
                     why = f"drawdown ${dd:,.0f} > ${args.max_dd_usd:,.0f}"
                     risk.halted = True
@@ -394,9 +413,9 @@ def main():
                     qty_l = round(args.notional / L["mid"], szd_l)
                     qty_s = round(args.notional / S["mid"], szd_s)
                     hl.order(aid_l, False, L["mid"] * 0.996, qty_l,
-                             tif="Ioc", reduce_only=True)
+                             tif="Ioc", reduce_only=True, szd=szd_l)
                     hl.order(aid_s, True, S["mid"] * 1.004, qty_s,
-                             tif="Ioc", reduce_only=True)
+                             tif="Ioc", reduce_only=True, szd=szd_s)
                     ok_l, got_l = hl.verify_fill(args.long_coin, 0.0, tol=0.05)
                     ok_s, got_s = hl.verify_fill(args.short_coin, 0.0, tol=0.05)
                     print(f"       closed long {got_l:+.4f} short {got_s:+.4f}")

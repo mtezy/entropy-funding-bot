@@ -40,7 +40,7 @@ class Market:
         meta = self.hl.meta(DEX)
         for i, a in enumerate(meta["universe"]):
             if a["name"] == self.coin:
-                self.asset_id = 200000 + i      # io dex base offset
+                self.asset_id = self.hl.asset_id("io", i)
                 self.sz_decimals = a["szDecimals"]
                 self.max_leverage = a["maxLeverage"]
                 return self

@@ -40,7 +40,7 @@ def leg(hl, coin):
     hist = hl.funding_history(coin, 168) or []
     rates = [float(x["fundingRate"]) for x in hist if "fundingRate" in x]
     return {
-        "coin": coin, "dex": dex or "main", "aid": (200000 + idx) if dex else idx,
+        "coin": coin, "dex": dex or "main", "aid": hl.asset_id(dex, idx),
         "szd": m["szDecimals"], "lev": m["maxLeverage"],
         "mode": m.get("marginMode"),
         "funding": float(c["funding"]),
@@ -48,6 +48,7 @@ def leg(hl, coin):
         "mid": float(c.get("midPx") or c.get("markPx") or 0),
         "oi_usd": float(c["openInterest"]) * float(c.get("midPx") or 0),
         "vol24": float(c["dayNtlVlm"]),
+        "raw": m,
     }
 
 
@@ -67,6 +68,8 @@ def main():
     ap.add_argument("--min-persist", type=float, default=0.75)
     ap.add_argument("--builder", default=None, help="builder address to verify")
     ap.add_argument("--fix", action="store_true", help="set leverage if not set")
+    ap.add_argument("--tier", default="tier1", choices=["tier1", "og", "pref", "part"],
+                    help="Entropy self-rebate tier, sets the entry cost")
     args = ap.parse_args()
 
     key = os.environ.get("HL_PRIVATE_KEY")
@@ -98,11 +101,20 @@ def main():
         raise SystemExit("need --auto, or both --long and --short")
 
     # ---- equity ----
+    # Under unifiedAccount the per-dex accountValue reads 0 while the money sits
+    # on spot. spendable() is the only number that reflects usable capital.
     eq = 0.0
     try:
-        eq = hl.account_value()
+        mode = hl.abstraction()
+        ldex0 = args.long_coin.split(":")[0] if ":" in args.long_coin else ""
+        sdex0 = args.short_coin.split(":")[0] if ":" in args.short_coin else ""
+        eq = min(hl.spendable(ldex0), hl.spendable(sdex0))
         wd = hl.withdrawable()
-        bar(True, "account value", f"${eq:,.2f}   withdrawable ${wd:,.2f}")
+        extra = ""
+        if mode in ("unifiedAccount", "portfolioMargin"):
+            tot, hold, avail = hl.spot_usdc()
+            extra = f"   spot ${tot:,.2f} ({hold:,.2f} held, {avail:,.2f} free)"
+        bar(True, "account value", f"${eq:,.2f} spendable ({mode}){extra}")
     except Exception as e:
         bar(False, "read equity", str(e)[:60])
 
@@ -135,7 +147,21 @@ def main():
 
     bps_hr = mean * 1e4
     apr = mean * HOURS_YEAR * 100
-    entry_bps = 18.0
+
+    # entry cost from the real fee model, not a hardcoded 18 bps:
+    # 4 taker fills (open 2 legs + close 2 legs), per-market growth mode
+    # and deployerFeeScale, minus the self-rebate for this tier.
+    import fees as F
+    gm_l = L["raw"].get("growthMode") == "enabled"
+    gm_s = S["raw"].get("growthMode") == "enabled"
+    dfs_l = float(L["raw"].get("deployerFeeScale", 1.0))
+    dfs_s = float(S["raw"].get("deployerFeeScale", 1.0))
+    ldex = "" if L["dex"] == "main" else L["dex"]
+    sdex = "" if S["dex"] == "main" else S["dex"]
+    entry_bps = sum(
+        F.net_bps(False, d, gm, dfs, args.tier) * 2
+        for d, gm, dfs in ((ldex, gm_l, dfs_l), (sdex, gm_s, dfs_s))
+    )
     payback = entry_bps / bps_hr if bps_hr > 0 else float("inf")
 
     print()
@@ -144,7 +170,9 @@ def main():
     bar(persist >= args.min_persist, "persistence",
         f"{persist*100:.0f}% of 168h same sign   (min {args.min_persist*100:.0f}%)")
     bar(payback < 48, "payback",
-        f"{payback:.1f}h to recover {entry_bps:.0f} bps entry cost")
+        f"{payback:.1f}h to recover {entry_bps:.2f} bps entry cost "
+        f"({'growth' if (gm_l and gm_s) else 'mixed' if (gm_l or gm_s) else 'normal'}, "
+        f"tier {args.tier})")
     bar(True, "worst 24h window", f"{worst24*1e4:+.1f} bps   (this is your bad case)")
     bar(True, "volatility", f"stdev {sd*1e4:.2f} bps/hr")
 

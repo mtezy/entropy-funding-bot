@@ -52,7 +52,7 @@ def resolve(hl, coin):
     meta = hl.meta(dex)
     for i, a in enumerate(meta["universe"]):
         if a.get("name") == coin:
-            aid = (200000 if dex else 0) + i
+            aid = hl.asset_id(dex, i)
             return aid, a["szDecimals"], a["maxLeverage"], a
     raise SystemExit(f"{coin} not found")
 
@@ -226,7 +226,8 @@ class Runner:
                 t2 = touch(self.hl, self.coin)
                 if t2:
                     px = price_for(side, step, t2[0], t2[1], tick_of(t2[2]))
-                r = self.hl.order(self.aid, side == "buy", px, sz, tif="Alo")
+                r = self.hl.order(self.aid, side == "buy", px, sz, tif="Alo",
+                                  szd=self.szd)
                 st = None
                 try:
                     st = r["response"]["data"]["statuses"][0]
@@ -287,13 +288,16 @@ class Runner:
             return
         bb, ba, _ = t
         px = ba if szi > 0 else bb
-        self.hl.order(self.aid, szi < 0, px, abs(szi), tif="Ioc", reduce_only=True)
+        self.hl.order(self.aid, szi < 0, px, abs(szi), tif="Ioc",
+                      reduce_only=True, szd=self.szd)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--coin", default="xyz:SP500", help="growth-mode market to quote")
-    ap.add_argument("--notional", type=float, default=50, help="USD per side per quote")
+    ap.add_argument("--notional", default="50",
+                    help="USD per side per quote, or 'max' for the largest your "
+                         "capital and leverage allow")
     ap.add_argument("--lev", type=int, default=3)
     ap.add_argument("--target", type=float, default=100_000, help="stop at this volume")
     ap.add_argument("--max-inv", type=float, default=None,
@@ -330,6 +334,23 @@ def main():
     hl = HL(private_key=key if args.live else None,
             builder=args.builder, builder_fee=args.builder_fee)
 
+    dex = args.coin.split(":")[0] if ":" in args.coin else ""
+
+    # ---- sizing -------------------------------------------------------
+    # --notional is USD PER SIDE. A round trip is 2x that: you buy once and
+    # sell once, so $75 per side generates $150 of volume per full cycle.
+    want_max = str(args.notional).strip().lower() == "max"
+    if want_max:
+        cap = hl.spendable(dex) if args.live else 1000.0
+        # both sides rest at once, so margin is 2x notional/lev
+        args.notional = round(cap * args.lev / 2 * 0.85, 2)
+        print(f"\n  auto-sized to ${args.notional:,.2f}/side "
+              f"(capital ${cap:,.2f} x {args.lev}x / 2 legs, 15% buffer)")
+    else:
+        args.notional = float(args.notional)
+    if args.notional <= 0:
+        raise SystemExit("--notional must be positive")
+
     if args.max_inv is None:
         _t = touch(hl, args.coin)
         _mid = _t[2] if _t else 1.0
@@ -346,9 +367,12 @@ def main():
     print(f"  volume per $1    {1/(r.net_bps/1e4):,.0f}")
     print(f"  target           ${args.target:,.0f}")
     print(f"  capital to spend ${args.target * r.net_bps/1e4:,.2f} on fees")
-    print(f"  quote size       {round_sz(args.notional/1, r.szd)} max units/side, "
-          f"${args.notional:,.0f} notional")
-    print(f"  leverage         {r.lev}x isolated")
+    print(f"  quote size       ${args.notional:,.0f} per side")
+    print(f"  volume per trip  ${args.notional * 2:,.0f}  (buy + sell)")
+    print(f"  leverage         {r.lev}x isolated  "
+          f"(liquidation at a {100.0 / r.lev:.1f}% adverse move)")
+    print(f"  margin per leg   ${args.notional / r.lev:,.2f}")
+    print(f"  margin both legs ${2 * args.notional / r.lev:,.2f}")
     print(f"  max inventory    {args.max_inv:g} units")
 
     if args.live:

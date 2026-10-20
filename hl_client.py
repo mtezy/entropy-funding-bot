@@ -71,6 +71,27 @@ def _fmt(x):
     return s if s else "0"
 
 
+def round_px(px, szd):
+    """
+    Hyperliquid rejects any price that is not "5 significant figures and no more
+    than 6 - szDecimals decimals". Sending full float precision gets
+    'Order has invalid price.' with no hint about which rule was broken.
+    """
+    d = max(0, 6 - int(szd))
+    try:
+        px = float(f"{float(px):.5g}")
+    except (TypeError, ValueError):
+        return px
+    out = round(px, d)
+    # never let the decimal cap round a price away to zero — fall back to the
+    # significant-figure rule alone, which is what the exchange checks first
+    return out if out > 0 else px
+
+
+def round_sz(sz, szd):
+    return round(float(sz), int(szd))
+
+
 class HL:
     def __init__(self, private_key=None, mainnet=True, timeout=15,
                  builder=None, builder_fee=None):
@@ -147,8 +168,46 @@ class HL:
     def approved_builders(self):
         return self.info({"type": "approvedBuilders", "user": self.address})
 
+    # ------------------------------------------------------------- asset ids
+    def dex_index(self, dex):
+        """
+        Position of `dex` in Hyperliquid's builder-dex list.
+
+        The order payload needs 100000 + dex_index*10000 + asset_index for a
+        builder-deployed perp. Hardcoding 200000 only happens to work for the
+        dex that sits at index 10 — every other dex gets "Asset N is out of
+        range" and the order is rejected.
+        """
+        if not dex:
+            return 0
+        if not hasattr(self, "_dex_idx"):
+            self._dex_idx = {}
+        if dex in self._dex_idx:
+            return self._dex_idx[dex]
+        try:
+            lst = self.info({"type": "perpDexs"})
+            for i, x in enumerate(lst):
+                if x and x.get("name"):
+                    self._dex_idx[x["name"]] = i
+        except Exception:
+            pass
+        return self._dex_idx.get(dex, 0)
+
+    def asset_id(self, dex, index):
+        """Exchange asset id for asset `index` on `dex` ('' = main perps)."""
+        if not dex:
+            return index
+        return 100000 + self.dex_index(dex) * 10000 + index
+
     # -------------------------------------------------------------- positions
-    def position(self, coin, dex=""):
+    def position(self, coin, dex=None):
+        """
+        A position on the dex that owns `coin`. 'para:UNITREE' lives on 'para';
+        without this inference the lookup hits the main dex and returns None,
+        which looks exactly like "the order never filled".
+        """
+        if dex is None:
+            dex = coin.split(":")[0] if ":" in coin else ""
         st = self.user_state(dex)
         for p in st.get("assetPositions", []):
             if p["position"]["coin"] == coin:
@@ -284,8 +343,11 @@ class HL:
         return None
 
     def order(self, asset_id, is_buy, px, sz, tif="Alo", reduce_only=False,
-              cloid=None, dry=False):
-        """tif: Alo = post-only (maker only) | Ioc | Gtc."""
+              cloid=None, dry=False, szd=None):
+        """tif: Alo = post-only (maker only) | Ioc | Gtc. szd = size decimals."""
+        if szd is not None:
+            px = round_px(px, szd)
+            sz = round_sz(sz, szd)
         o = {
             "a": asset_id, "b": bool(is_buy), "p": _fmt(px), "s": _fmt(sz),
             "r": bool(reduce_only), "t": {"limit": {"tif": tif}},
@@ -545,7 +607,7 @@ class HL:
             return []
 
     # ---------------------------------------------------------- verification
-    def verify_fill(self, coin, want_szi, tol=0.02, tries=8, wait=0.7, dex=""):
+    def verify_fill(self, coin, want_szi, tol=0.02, tries=8, wait=0.7, dex=None):
         """Poll until the position matches want_szi (signed). Returns (ok, actual)."""
         actual = 0.0
         for _ in range(tries):

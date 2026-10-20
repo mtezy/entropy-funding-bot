@@ -58,7 +58,7 @@ def load_all(hl):
                 continue
             base = m["name"].split(":")[-1]
             out.setdefault(base, []).append({
-                "dex": dex or "main", "coin": m["name"], "aid": (200000 + i) if dex else i,
+                "dex": dex or "main", "coin": m["name"], "aid": hl.asset_id(dex, i),
                 "mid": mid, "funding": funding, "oi_usd": oi * mid, "vol24": vol,
                 "lev": m.get("maxLeverage") or 1, "szd": m.get("szDecimals", 3),
             })
