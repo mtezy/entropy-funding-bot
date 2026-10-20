@@ -165,15 +165,29 @@ class Runner:
             STOP["flag"] = True
             return
 
+        # ---- cross guard ------------------------------------------------
+        # A post-only order is killed the instant it would cross. Between the
+        # book snapshot and the order landing, the touch can move one tick, so
+        # quoting exactly ON the touch gets rejected on any moving market.
+        # Keep the price strictly on our own side of the book, and step one
+        # tick further out when the spread is a single tick.
+        # Join the touch by default (best fill odds). price_for() already keeps
+        # us on our own side of the book, and the retry below steps one tick
+        # out if the touch moved between the snapshot and the order landing.
+        gap_ticks = max(0, round((ba - bb) / tk))
+        base_step = 0
+
+        def price_for(side, step, b=None, a=None, tk_=None):
+            b = bb if b is None else b
+            a = ba if a is None else a
+            tk_ = tk if tk_ is None else tk_
+            px = (min(b, a - tk_) - step * tk_) if side == "buy" \
+                else (max(a, b + tk_) + step * tk_)
+            return round(px, 8)
+
         # don't add to a position that is already at the cap
-        if self.inv > 0:
-            bid_px = None
-        else:
-            bid_px = round_px(bb, self.szd, True)
-        if self.inv < 0:
-            ask_px = None
-        else:
-            ask_px = round_px(ba, self.szd, False)
+        bid_px = None if self.inv > 0 else price_for("buy", base_step)
+        ask_px = None if self.inv < 0 else price_for("sell", base_step)
 
         # cancel stale quotes
         for side, px in (("buy", bid_px), ("sell", ask_px)):
@@ -197,34 +211,55 @@ class Runner:
                 self.oids[side] = None
             if abs(self.inv) >= self.max_inv:
                 continue
-            if self.live:
+
+            if not self.live:
+                self.oids[side] = -1
+                self.last_px[side] = px
+                print(f"  quote {side:4} {sz:g} @ {px:g}")
+                continue
+
+            oid = None
+            crossed = False
+            for step in (base_step, base_step + 1):
+                # re-read the book right before the order: the snapshot above
+                # is already stale by the time we reach this point
+                t2 = touch(self.hl, self.coin)
+                if t2:
+                    px = price_for(side, step, t2[0], t2[1], tick_of(t2[2]))
                 r = self.hl.order(self.aid, side == "buy", px, sz, tif="Alo")
-                oid = None
+                st = None
                 try:
                     st = r["response"]["data"]["statuses"][0]
-                    if "resting" in st:
-                        oid = st["resting"]["oid"]
-                    elif "error" in st:
-                        print(f"  {side} rejected: {st['error']}")
                 except Exception:
-                    print(f"  {side} response: {r}")
-                if isinstance(r, dict) and r.get("status") == "err":
-                    self.err_streak += 1
-                    msg = str(r.get("response", ""))[:120]
-                    print(f"  {side} REJECTED: {msg}")
-                    if r.get("_diagnosis"):
-                        print(f"  -> {r['_diagnosis']}")
-                    if self.err_streak >= 3:
-                        print("\n  3 rejections in a row — stopping so you can fix this.\n")
-                        STOP["flag"] = True
-                        return
-                else:
-                    self.err_streak = 0
-                self.oids[side] = oid
-            else:
-                self.oids[side] = -1
+                    pass
+                if st and "resting" in st:
+                    oid = st["resting"]["oid"]
+                    break
+                err = st.get("error", "") if st else str(
+                    r.get("response", r) if isinstance(r, dict) else r)
+                if "immediately matched" in err:
+                    crossed = True
+                    if step == base_step:
+                        print(f"  {side} would cross at {px:g} — "
+                              f"stepping one tick out")
+                        continue
+                print(f"  {side} rejected: {err[:110]}")
+                break
+
+            self.oids[side] = oid
             self.last_px[side] = px
-            print(f"  quote {side:4} {sz:g} @ {px:g}")
+            if oid:
+                self.err_streak = 0
+                print(f"  quote {side:4} {sz:g} @ {px:g}")
+            elif crossed:
+                # market noise, not a bug — do not trip the breaker
+                print(f"  quote {side:4} skipped this round")
+            else:
+                self.err_streak += 1
+                if self.err_streak >= 3:
+                    print("\n  3 rejections in a row — stopping so you can fix this.\n")
+                    STOP["flag"] = True
+                    return
 
     def cancel_all(self):
         self.last_px = {"buy": None, "sell": None}
@@ -232,7 +267,7 @@ class Runner:
             self.oids = {"buy": None, "sell": None}
             return
         for side in ("buy", "sell"):
-            if self.oids[side] and self.oids[side] > 0:
+            if (self.oids[side] or 0) > 0:
                 try:
                     self.hl.cancel(self.aid, self.oids[side])
                 except Exception:
