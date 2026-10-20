@@ -182,7 +182,17 @@ unless you pass `--tier`.
 the highest-leverage action available and it is free. 60% → 120% is worth more than
 doubling your capital.
 
-**3. Move USDC to the dex you are trading.**
+**3. Check your abstraction mode, then fund only if you have to.**
+```bash
+python3 fund_dex.py --show --key-file wallet.key
+```
+
+```
+abstraction = unifiedAccount  ->  spot USDC backs every dex. NO transfer needed.
+abstraction = disabled        ->  collateral is per dex. Transfer required.
+```
+
+If disabled:
 ```bash
 python3 fund_dex.py --to io --amount 15 --key-file wallet.key
 ```

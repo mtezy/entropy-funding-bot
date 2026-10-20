@@ -77,18 +77,45 @@ position on an existing one.
 
 ---
 
-## Before your first order: USDC is separate per dex
+## Before your first order: check your abstraction mode
 
-Hyperliquid holds collateral in separate accounts: `spot`, `main`, and one per builder
-dex (`io`, `xyz`, `para`, `mkts`). A deposit lands on spot/main. Trading `xyz:TSLA`
-needs margin **on the xyz dex**.
+Hyperliquid has two collateral models. Which one you are on decides whether you need to
+move funds at all:
+
+```
+abstraction = disabled
+    Collateral is held PER DEX. Money on main does nothing for io or xyz.
+    You must sendAsset to each dex before trading there.
+
+abstraction = unifiedAccount  (or portfolioMargin)
+    One USDC balance on spot backs positions on EVERY dex. Per-dex balances
+    still read 0 for dexes you have not traded — that looks like "no funds"
+    but is not. NO transfer needed.
+```
 
 ```bash
 python3 fund_dex.py --show --key-file wallet.key
-python3 fund_dex.py --to xyz --amount 15 --key-file wallet.key
 ```
 
-`doctor.py` detects this and prints the exact command.
+```
+  abstraction        unifiedAccount
+                     one spot balance backs all dexes — transfers NOT needed
+
+  spot          12.486591   total on spot
+                 9.934741   held as margin for open positions
+                 2.551850   free / available
+  io             0.000000   io dex — entropy native markets
+  xyz            9.934741   xyz dex
+
+  >>> You do NOT need to transfer anything.
+```
+
+If you are on `disabled`, move funds to the dex you want:
+
+```bash
+python3 fund_dex.py --to io --amount 15 --key-file wallet.key
+python3 fund_dex.py --set-abstraction unifiedAccount --key-file wallet.key   # or switch
+```
 
 ## Install
 

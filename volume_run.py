@@ -304,21 +304,31 @@ def main():
     print(f"  max inventory    {args.max_inv:g} units")
 
     if args.live:
-        eq = hl.account_value(r.dex)
+        mode = hl.abstraction()
+        unified = mode in ("unifiedAccount", "portfolioMargin")
+        tot_spot, hold, avail_spot = hl.spot_usdc()
+        eq = hl.spendable(r.dex)
         bal = hl.balances()
-        elsewhere = sum(v for k, v in bal.items() if k not in (r.dex or "main",)) 
-        print(f"  account value    ${eq:,.2f}  (on the '{r.dex or 'main'}' account)")
+        elsewhere = sum(v for k, v in bal.items() if k not in (r.dex or "main",))
+        print(f"  abstraction      {mode}")
+        print(f"  spendable        ${eq:,.2f}  (for '{r.dex or 'main'}')")
+        if unified:
+            print(f"  spot USDC        ${tot_spot:,.2f} total, ${avail_spot:,.2f} free")
         need = args.notional / r.lev * 1.5
         if eq < need:
-            print(f"\n  NOT ENOUGH MARGIN on '{r.dex or 'main'}': need ~${need:,.0f}, have ${eq:,.2f}")
-            if elsewhere > 0.5:
-                print(f"\n  You have ${elsewhere:,.2f} on OTHER accounts. USDC is separate per dex —")
-                print(f"  a balance on main does not give you margin on {r.dex or 'main'}.")
+            print(f"\n  NOT ENOUGH MARGIN: need ~${need:,.2f}, spendable ${eq:,.2f}")
+            if unified:
+                print(f"\n  You are on '{mode}' — the spot balance backs every dex, so this")
+                print(f"  is a capital problem, not a transfer problem. Deposit")
+                print(f"  ${max(0, need - eq):,.2f} more, or lower --notional.")
+            elif elsewhere > 0.5:
+                print(f"\n  You have ${elsewhere:,.2f} on OTHER accounts. Collateral is held")
+                print(f"  per dex, so a balance on main does not give you margin on {r.dex or 'main'}.")
                 print(f"  Move it:\n")
                 print(f"    python3 fund_dex.py --to {r.dex or 'main'} --amount {need:.2f} --key-file wallet.key\n")
             else:
                 print(f"  Deposit at least ${need - eq:,.2f} more USDC.\n")
-            print(f"  Run the full check:  python3 doctor.py --key-file wallet.key "
+            print(f"  Full check:  python3 doctor.py --key-file wallet.key "
                   f"--coin {args.coin} --notional {args.notional}\n")
             return 1
         if not args.yes:

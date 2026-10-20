@@ -139,7 +139,40 @@ python3 preflight.py --key-file wallet.key --notional 1000
 
 If an address appears on the first line, the key is valid.
 
-### 4.2 Deposit USDC
+### 4.2 Deposit USDC — and check your abstraction mode
+
+```bash
+python3 fund_dex.py --show --key-file wallet.key
+```
+
+**Hyperliquid has two collateral models, and they change what you must do:**
+
+```
+abstraction = disabled
+    Collateral is held PER DEX. Money on main does nothing for io or xyz.
+    You must sendAsset to each dex before trading there.
+
+abstraction = unifiedAccount  (or portfolioMargin)
+    One USDC balance on spot backs positions on EVERY dex. Per-dex balances
+    still read 0 for dexes you have not traded — that looks like "no funds"
+    but is not. NO transfer needed.
+```
+
+If `--show` says `unifiedAccount`, skip every transfer step below and trade
+directly. If it says `disabled`, move funds to the dex you want:
+
+```bash
+python3 fund_dex.py --to io --amount 15 --key-file wallet.key
+```
+
+To change mode:
+
+```bash
+python3 fund_dex.py --set-abstraction unifiedAccount --key-file wallet.key
+python3 fund_dex.py --set-abstraction disabled --key-file wallet.key
+```
+
+### 4.3 Deposit USDC
 
 Bridge USDC (Arbitrum → Hyperliquid) at [app.hyperliquid.xyz](https://app.hyperliquid.xyz).
 Confirm with `preflight.py` — the `account value` line must show your balance.

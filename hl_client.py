@@ -51,6 +51,20 @@ SEND_ASSET_TYPES = [
     {"name": "nonce", "type": "uint64"},
 ]
 
+SET_ABSTRACTION_TYPES = [
+    {"name": "hyperliquidChain", "type": "string"},
+    {"name": "user", "type": "address"},
+    {"name": "abstraction", "type": "string"},
+    {"name": "nonce", "type": "uint64"},
+]
+
+DEX_ABSTRACTION_TYPES = [
+    {"name": "hyperliquidChain", "type": "string"},
+    {"name": "user", "type": "address"},
+    {"name": "enabled", "type": "bool"},
+    {"name": "nonce", "type": "uint64"},
+]
+
 
 def _fmt(x):
     s = f"{float(x):.10f}".rstrip("0").rstrip(".")
@@ -349,6 +363,115 @@ class HL:
             except Exception:
                 out[dex or "main"] = 0.0
         return out
+
+    # ------------------------------------------------------- account abstraction
+    def abstraction(self):
+        """
+        'disabled' | 'unifiedAccount' | 'portfolioMargin'
+
+        This decides whether USDC has to be moved between dexes at all.
+
+            disabled        collateral is held PER DEX. A balance on main does
+                            nothing for xyz. You must sendAsset to each dex.
+            unifiedAccount  one USDC balance on spot backs positions on every
+                            dex. NO transfer needed — sendAsset is pointless.
+            portfolioMargin cross-margin portfolio across the whole account.
+        """
+        try:
+            return self.info({"type": "userAbstraction", "user": self.address})
+        except Exception:
+            return "disabled"
+
+    def dex_abstraction_enabled(self):
+        """Legacy per-dex abstraction flag."""
+        try:
+            return bool(self.info({"type": "userDexAbstraction", "user": self.address}))
+        except Exception:
+            return False
+
+    def spot_usdc(self):
+        """(total, hold, available) for spot USDC. hold = margin already committed."""
+        try:
+            st = self.info({"type": "spotClearinghouseState", "user": self.address})
+            for b in st.get("balances", []):
+                if b.get("coin") == "USDC":
+                    tot = float(b.get("total", 0) or 0)
+                    hold = float(b.get("hold", 0) or 0)
+                    return tot, hold, tot - hold
+        except Exception:
+            pass
+        return 0.0, 0.0, 0.0
+
+    def spendable(self, dex=""):
+        """
+        USDC you can actually put to work on `dex`. This is the number that
+        matters before an order — not the per-dex accountValue, which reads 0
+        under unifiedAccount even when you have plenty.
+        """
+        mode = self.abstraction()
+        if mode in ("unifiedAccount", "portfolioMargin"):
+            tot, hold, avail = self.spot_usdc()
+            # under unified, the per-dex value plus free spot is what you can use
+            try:
+                alloc = self.account_value(dex)
+            except Exception:
+                alloc = 0.0
+            return avail + alloc
+        return self.account_value(dex)
+
+    def set_abstraction(self, mode, dry=False):
+        """mode: 'disabled' | 'unifiedAccount' | 'portfolioMargin'"""
+        if mode not in ("disabled", "unifiedAccount", "portfolioMargin"):
+            raise ValueError("mode must be disabled | unifiedAccount | portfolioMargin")
+        nonce = int(time.time() * 1000)
+        action = {
+            "type": "userSetAbstraction",
+            "user": self.address.lower(),
+            "abstraction": mode,
+            "nonce": nonce,
+            "signatureChainId": "0x66eee",
+            "hyperliquidChain": "Mainnet" if self.mainnet else "Testnet",
+        }
+        if dry or not self.acct:
+            return {"dry": True, "action": action}
+        sig = self._sign_user_action(action, SET_ABSTRACTION_TYPES,
+                                     "HyperliquidTransaction:UserSetAbstraction")
+        body = {"action": action, "nonce": nonce, "signature": sig, "vaultAddress": None}
+        r = self.s.post(EXCHANGE_URL, json=body, timeout=self.timeout)
+        try:
+            return r.json()
+        except Exception:
+            return {"status": "parse_error", "code": r.status_code, "text": r.text[:400]}
+
+    def set_dex_abstraction(self, enabled, dry=False):
+        """Legacy per-dex abstraction toggle."""
+        nonce = int(time.time() * 1000)
+        action = {
+            "type": "userDexAbstraction",
+            "user": self.address.lower(),
+            "enabled": bool(enabled),
+            "nonce": nonce,
+            "signatureChainId": "0x66eee",
+            "hyperliquidChain": "Mainnet" if self.mainnet else "Testnet",
+        }
+        if dry or not self.acct:
+            return {"dry": True, "action": action}
+        sig = self._sign_user_action(action, DEX_ABSTRACTION_TYPES,
+                                     "HyperliquidTransaction:UserDexAbstraction")
+        body = {"action": action, "nonce": nonce, "signature": sig, "vaultAddress": None}
+        r = self.s.post(EXCHANGE_URL, json=body, timeout=self.timeout)
+        try:
+            return r.json()
+        except Exception:
+            return {"status": "parse_error", "code": r.status_code, "text": r.text[:400]}
+
+    def deposit_history(self, limit=10):
+        """Ledger entries — proves whether funds ever arrived at this address."""
+        try:
+            lu = self.info({"type": "userNonFundingLedgerUpdates", "user": self.address})
+            return lu[:limit] if isinstance(lu, list) else []
+        except Exception:
+            return []
 
     # ---------------------------------------------------------- verification
     def verify_fill(self, coin, want_szi, tol=0.02, tries=8, wait=0.7, dex=""):

@@ -112,20 +112,37 @@ def main():
 
 def _diagnose(hl, args, key):
     problems = []
-    # ---- 4. balances per account ----
-    print("\n  --- balances (USDC is separate per dex) ---")
-    bal = hl.balances()
+    # ---- 4. balances, respecting the abstraction mode ----
     dex_of_coin = args.coin.split(":")[0] if ":" in args.coin else ""
-    total = 0.0
-    for k in ("spot", "main", "io", "xyz", "para", "mkts"):
-        v = bal.get(k, 0.0)
-        total += v
-        mark = "  <- you need money HERE" if k == (dex_of_coin or "main") else ""
-        line(OK if v > 0 else WARN, f"  {k}", f"${v:,.2f}{mark}")
-    line(OK if total > 0 else BAD, "total across accounts", f"${total:,.2f}")
-
     need_dex = dex_of_coin or "main"
-    have_dex = bal.get(need_dex, 0.0)
+
+    try:
+        mode = hl.abstraction()
+    except Exception:
+        mode = "disabled"
+    unified = mode in ("unifiedAccount", "portfolioMargin")
+    tot_spot, hold, avail_spot = hl.spot_usdc()
+    bal = hl.balances()
+
+    print(f"\n  --- balances ---")
+    line(OK, "abstraction", mode +
+         ("  (one spot balance backs all dexes)" if unified
+          else "  (collateral held per dex)"))
+
+    if unified:
+        line(OK if tot_spot > 0 else BAD, "spot USDC",
+             f"${tot_spot:,.2f} total, ${hold:,.2f} held, ${avail_spot:,.2f} free")
+    else:
+        for k in ("spot", "main", "io", "xyz", "para", "mkts"):
+            v = bal.get(k, 0.0)
+            mark = "  <- you need money HERE" if k == need_dex else ""
+            line(OK if v > 0 else WARN, f"  {k}", f"${v:,.2f}{mark}")
+
+    total = sum(bal.values())
+    have_dex = hl.spendable(dex_of_coin)
+    line(OK if total > 0 else BAD, "total across accounts", f"${total:,.2f}")
+    line(OK if have_dex > 0 else BAD, f"spendable on {need_dex}",
+         f"${have_dex:,.2f}" + ("  (unified)" if unified else ""))
 
     # ---- 5. market exists ----
     print(f"\n  --- market {args.coin} ---")
@@ -189,16 +206,22 @@ def _diagnose(hl, args, key):
     line(OK, "margin per leg", f"${margin_per_leg:,.2f}")
     line(OK, "margin both legs", f"${margin_both:,.2f}")
     if have_dex < buffer_need:
-        line(BAD, f"balance on '{need_dex}' dex", f"${have_dex:,.2f} < ${buffer_need:,.2f} needed")
-        if total > buffer_need:
+        line(BAD, f"spendable on '{need_dex}'", f"${have_dex:,.2f} < ${buffer_need:,.2f} needed")
+        if unified and avail_spot > 0:
             problems.append(
-                f"your money is on another account — move ${min(have_dex + (buffer_need - have_dex), total):.2f} "
+                f"you have ${avail_spot:,.2f} free on spot but need ${buffer_need:,.2f}. "
+                f"Under '{mode}' the spot balance backs every dex, so this is a "
+                f"capital problem, not a transfer problem — deposit "
+                f"${buffer_need - have_dex:,.2f} more, or lower --notional")
+        elif not unified and total > buffer_need:
+            problems.append(
+                f"your money is on another account — move ${buffer_need:.2f} "
                 f"to the '{need_dex}' dex:\n"
                 f"         python3 fund_dex.py --to {need_dex} --amount {buffer_need:.2f} --key-file wallet.key")
         else:
             problems.append(f"deposit at least ${buffer_need - total:,.2f} more USDC")
     else:
-        line(OK, f"balance on '{need_dex}' dex", f"${have_dex:,.2f} (need ${buffer_need:,.2f})")
+        line(OK, f"spendable on '{need_dex}'", f"${have_dex:,.2f} (need ${buffer_need:,.2f})")
 
     # ---- 8. fees ----
     print(f"\n  --- fees ---")
