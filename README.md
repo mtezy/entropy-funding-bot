@@ -131,6 +131,8 @@ python3 status.py --key-file wallet.key
 | `config.py` | Referral code + gate. Single source of truth. |
 | `fees.py` | The real fee model: HIP-3 2x, growth mode 0.1x, self-rebate tiers. |
 | `volume_planner.py` | Capital -> achievable volume, per market type and tier. |
+| `volume_run.py` | Post-only maker volume runner. Dry by default. |
+| `tier_check.py` | Your rebate tier, referral progress, effective rates. Read-only. |
 | `funding_arb.py` | Simpler snapshot scanner (reference). |
 | `scan_markets.py` | 340-market MM scan (result: not viable). |
 | `deepdive.py` | Tick size, ticks-in-spread, flow stats. |
@@ -138,7 +140,8 @@ python3 status.py --key-file wallet.key
 | `mm_anth.py` | Market maker — works, but not deployed. See FINDINGS §5. |
 
 Docs: [GUIDE.md](GUIDE.md) operator guide · [REFERRAL.md](REFERRAL.md) monetization ·
-[VOLUME.md](VOLUME.md) volume economics · [FINDINGS.md](FINDINGS.md) full analysis.
+[VOLUME.md](VOLUME.md) volume economics · [VOLUME_RUN.md](VOLUME_RUN.md) how to run it ·
+[FINDINGS.md](FINDINGS.md) full analysis.
 
 ## Volume economics in one line
 
@@ -155,6 +158,19 @@ normal market.
 ```bash
 python3 volume_planner.py --capital 15 --target 1000000
 ```
+
+## Generate volume
+
+```bash
+python3 tier_check.py --key-file wallet.key                 # tier + referral progress
+python3 volume_planner.py --capital 15 --live-flow          # which markets trade
+python3 volume_run.py --coin xyz:SP500 --notional 50 --target 100000    # dry run
+python3 volume_run.py --coin xyz:SP500 --notional 50 --target 100000 \
+    --live --i-used-referral --key-file wallet.key          # live
+```
+
+Posts post-only maker orders on both sides and reprices on the touch. Other people's flow
+fills them — it does not self-match, because that is wash trading and forfeits every reward.
 
 ---
 
