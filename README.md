@@ -148,6 +148,7 @@ python3 status.py --key-file wallet.key
 | `tier_check.py` | Your rebate tier, referral progress, effective rates. Read-only. |
 | `doctor.py` | Diagnoses why a command fails. Read-only, works on any address. |
 | `fund_dex.py` | Move USDC between spot / main / builder dex accounts. |
+| `farm.py` | Farm audit: what is farmable, tier economics, native market ranking. |
 | `funding_arb.py` | Simpler snapshot scanner (reference). |
 | `scan_markets.py` | 340-market MM scan (result: not viable). |
 | `deepdive.py` | Tick size, ticks-in-spread, flow stats. |
@@ -156,7 +157,7 @@ python3 status.py --key-file wallet.key
 
 Docs: [GUIDE.md](GUIDE.md) operator guide · [REFERRAL.md](REFERRAL.md) monetization ·
 [VOLUME.md](VOLUME.md) volume economics · [VOLUME_RUN.md](VOLUME_RUN.md) how to run it ·
-[FINDINGS.md](FINDINGS.md) full analysis.
+[FARM.md](FARM.md) what is actually farmable · [FINDINGS.md](FINDINGS.md) full analysis.
 
 ## Volume economics in one line
 
@@ -173,6 +174,30 @@ normal market.
 ```bash
 python3 volume_planner.py --capital 15 --target 1000000
 ```
+
+## Farming
+
+```bash
+python3 farm.py --key-file wallet.key --capital 18
+```
+
+Three things get called farming here, and only one is guaranteed:
+
+```
+FEE REBATE          live, paid in HYPE bi-weekly     <- real
+REFERRAL REWARD     live, % of other users' fees     <- needs users
+POINTS / AIRDROP    NOT ANNOUNCED                    <- a bet
+```
+
+Tier is worth more than capital. Growth-mode maker is 0.30 bps gross:
+
+```
+Tier 1   60%    0.210 bps net     47,619 volume per $1
+Tier 4  200%    0.000 bps net     free volume
+```
+
+Every tier below 4 costs you your entire balance to push volume. At Tier 4 it is free.
+See [FARM.md](FARM.md).
 
 ## Generate volume
 
