@@ -206,13 +206,16 @@ def main():
         for t, pct in F.TIERS.items():
             net = F.net_bps(True, "io", True, 1.0, t)
             vpd = F.volume_per_dollar(True, "io", True, tier=t)
+            vpd_s = "unlimited" if vpd == float("inf") else f"{vpd:,.0f}"
             e = economics(args.capital, t, net)
             v = "unlimited" if e["volume"] == float("inf") else f"${e['volume']:,.0f}"
-            print(f"  {t:8} {pct*100:>11.0f}% {net:>9.3f} {vpd:>12,.0f} {v:>12}")
+            if v == "unlimited":
+                v = "unlimited"
+            print(f"  {t:8} {pct*100:>11.0f}% {net:>9.3f} {vpd_s:>12} {v:>12}")
 
         print("""
-  Read that column: at Tier 1 (60%) $18 pushes ~$714k of volume before the fees
-  eat the balance. At Tier 4 (200%) the net fee is zero and volume is unlimited
+  Read that column: at Tier 1 (60%) your capital pushes that much volume before
+  the fees eat the balance — and the fees do eat it, all of it. At Tier 4 (200%) the net fee is zero and volume is unlimited
   by fee — limited only by margin and by whether anyone fills your orders.
 
   Tier 2 (OG) has NO volume threshold in the docs. It is grantable via the
