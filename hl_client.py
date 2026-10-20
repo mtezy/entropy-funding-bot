@@ -40,6 +40,17 @@ AGENT_TYPES = {
     ]
 }
 
+SEND_ASSET_TYPES = [
+    {"name": "hyperliquidChain", "type": "string"},
+    {"name": "destination", "type": "string"},
+    {"name": "sourceDex", "type": "string"},
+    {"name": "destinationDex", "type": "string"},
+    {"name": "token", "type": "string"},
+    {"name": "amount", "type": "string"},
+    {"name": "fromSubAccount", "type": "string"},
+    {"name": "nonce", "type": "uint64"},
+]
+
 
 def _fmt(x):
     s = f"{float(x):.10f}".rstrip("0").rstrip(".")
@@ -252,6 +263,92 @@ class HL:
     def set_referrer(self, code, dry=False):
         """Attach a referral code. User gets a fee discount; referrer earns a share."""
         return self.post_action({"type": "setReferrer", "code": code}, dry=dry)
+
+    # ------------------------------------------------------- user-signed actions
+    def _sign_user_action(self, action, payload_types, primary_type):
+        """
+        User-signed actions (sendAsset, approveBuilderFee, ...) use a different
+        EIP-712 domain from order actions: name HyperliquidSignTransaction,
+        chainId taken from action["signatureChainId"].
+        """
+        data = {
+            "domain": {
+                "name": "HyperliquidSignTransaction",
+                "version": "1",
+                "chainId": int(action["signatureChainId"], 16),
+                "verifyingContract": "0x0000000000000000000000000000000000000000",
+            },
+            "types": {
+                primary_type: payload_types,
+                "EIP712Domain": [
+                    {"name": "name", "type": "string"},
+                    {"name": "version", "type": "string"},
+                    {"name": "chainId", "type": "uint256"},
+                    {"name": "verifyingContract", "type": "address"},
+                ],
+            },
+            "primaryType": primary_type,
+            "message": action,
+        }
+        signed = self.acct.sign_message(encode_typed_data(full_message=data))
+        return {
+            "r": "0x" + signed.r.to_bytes(32, "big").hex(),
+            "s": "0x" + signed.s.to_bytes(32, "big").hex(),
+            "v": signed.v,
+        }
+
+    def send_asset(self, destination, source_dex, dest_dex, amount,
+                   token="USDC", dry=False):
+        """
+        Move collateral between accounts. This is how you fund a builder dex.
+
+            source_dex / dest_dex: "" = main perp account, "spot" = spot wallet,
+                                   "xyz" / "para" / "io" / "mkts" = that dex
+
+        USDC is separate per dex — a balance on the main perp account is NOT
+        usable to trade xyz:TSLA. You must send it to the xyz dex first.
+        """
+        nonce = int(time.time() * 1000)
+        action = {
+            "type": "sendAsset",
+            "destination": destination,
+            "sourceDex": source_dex,
+            "destinationDex": dest_dex,
+            "token": token,
+            "amount": _fmt(amount),
+            "fromSubAccount": "",
+            "nonce": nonce,
+            "signatureChainId": "0x66eee",
+            "hyperliquidChain": "Mainnet" if self.mainnet else "Testnet",
+        }
+        if dry or not self.acct:
+            return {"dry": True, "action": action}
+
+        sig = self._sign_user_action(action, SEND_ASSET_TYPES,
+                                     "HyperliquidTransaction:SendAsset")
+        body = {"action": action, "nonce": nonce, "signature": sig, "vaultAddress": None}
+        r = self.s.post(EXCHANGE_URL, json=body, timeout=self.timeout)
+        try:
+            return r.json()
+        except Exception:
+            return {"status": "parse_error", "code": r.status_code, "text": r.text[:400]}
+
+    def balances(self):
+        """USDC available on spot, main perp, and every builder dex."""
+        out = {}
+        try:
+            st = self.info({"type": "spotClearinghouseState", "user": self.address})
+            for b in st.get("balances", []):
+                if b.get("coin") == "USDC":
+                    out["spot"] = float(b.get("total", 0) or 0)
+        except Exception:
+            pass
+        for dex in ("", "io", "xyz", "para", "mkts"):
+            try:
+                out[dex or "main"] = self.account_value(dex)
+            except Exception:
+                out[dex or "main"] = 0.0
+        return out
 
     # ---------------------------------------------------------- verification
     def verify_fill(self, coin, want_szi, tol=0.02, tries=8, wait=0.7, dex=""):

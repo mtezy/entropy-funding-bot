@@ -77,6 +77,19 @@ position on an existing one.
 
 ---
 
+## Before your first order: USDC is separate per dex
+
+Hyperliquid holds collateral in separate accounts: `spot`, `main`, and one per builder
+dex (`io`, `xyz`, `para`, `mkts`). A deposit lands on spot/main. Trading `xyz:TSLA`
+needs margin **on the xyz dex**.
+
+```bash
+python3 fund_dex.py --show --key-file wallet.key
+python3 fund_dex.py --to xyz --amount 15 --key-file wallet.key
+```
+
+`doctor.py` detects this and prints the exact command.
+
 ## Install
 
 ```bash
@@ -133,6 +146,8 @@ python3 status.py --key-file wallet.key
 | `volume_planner.py` | Capital -> achievable volume, per market type and tier. |
 | `volume_run.py` | Post-only maker volume runner. Dry by default. |
 | `tier_check.py` | Your rebate tier, referral progress, effective rates. Read-only. |
+| `doctor.py` | Diagnoses why a command fails. Read-only, works on any address. |
+| `fund_dex.py` | Move USDC between spot / main / builder dex accounts. |
 | `funding_arb.py` | Simpler snapshot scanner (reference). |
 | `scan_markets.py` | 340-market MM scan (result: not viable). |
 | `deepdive.py` | Tick size, ticks-in-spread, flow stats. |
@@ -162,6 +177,8 @@ python3 volume_planner.py --capital 15 --target 1000000
 ## Generate volume
 
 ```bash
+python3 doctor.py --key-file wallet.key --coin xyz:TSLA --notional 15  # diagnose first
+python3 fund_dex.py --show --key-file wallet.key            # where is my USDC
 python3 tier_check.py --key-file wallet.key                 # tier + referral progress
 python3 volume_planner.py --capital 15 --live-flow          # which markets trade
 python3 volume_run.py --coin xyz:SP500 --notional 50 --target 100000    # dry run

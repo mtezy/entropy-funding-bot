@@ -4,7 +4,42 @@ Everything below is copy-paste. Read section 0 first — it decides whether the 
 
 ---
 
-## 0. Before anything: check your tier
+## 0a. First, diagnose. Do not skip this.
+
+```bash
+python3 doctor.py --key-file wallet.key --coin xyz:TSLA --notional 15
+```
+
+It checks packages, key format, balances on every account, market metadata, minimum
+order size, margin, fees, flow and referral attribution, then prints the fix.
+
+**The most common failure, and the one that catches everyone:**
+
+> USDC on Hyperliquid is held **separately per dex**. Depositing gives you `spot` and
+> `main`. It does **not** give you margin on `xyz`, `para`, `io` or `mkts`.
+
+So this is normal and not a bug:
+
+```
+  [WARN]   spot                     $0.00
+  [OK  ]   main                     $18.00
+  [WARN]   xyz                      $0.00  <- you need money HERE
+```
+
+Trading `xyz:TSLA` with $0 on the `xyz` dex fails no matter how much sits on `main`.
+Move it:
+
+```bash
+python3 fund_dex.py --show --key-file wallet.key                    # where is it?
+python3 fund_dex.py --to xyz --amount 15 --key-file wallet.key      # move it
+```
+
+Verified against real accounts: an address with $12.51 on spot and $9.96 on xyz shows
+`main $0.00`. The separation is real.
+
+---
+
+## 0b. Then check your tier
 
 ```bash
 python3 tier_check.py --key-file wallet.key

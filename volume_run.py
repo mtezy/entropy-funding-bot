@@ -305,9 +305,21 @@ def main():
 
     if args.live:
         eq = hl.account_value(r.dex)
-        print(f"  account value    ${eq:,.2f}")
-        if eq < args.notional / r.lev * 1.5:
-            print(f"\n  NOT ENOUGH MARGIN: need ~${args.notional/r.lev*1.5:,.0f}, have ${eq:,.2f}")
+        bal = hl.balances()
+        elsewhere = sum(v for k, v in bal.items() if k not in (r.dex or "main",)) 
+        print(f"  account value    ${eq:,.2f}  (on the '{r.dex or 'main'}' account)")
+        need = args.notional / r.lev * 1.5
+        if eq < need:
+            print(f"\n  NOT ENOUGH MARGIN on '{r.dex or 'main'}': need ~${need:,.0f}, have ${eq:,.2f}")
+            if elsewhere > 0.5:
+                print(f"\n  You have ${elsewhere:,.2f} on OTHER accounts. USDC is separate per dex —")
+                print(f"  a balance on main does not give you margin on {r.dex or 'main'}.")
+                print(f"  Move it:\n")
+                print(f"    python3 fund_dex.py --to {r.dex or 'main'} --amount {need:.2f} --key-file wallet.key\n")
+            else:
+                print(f"  Deposit at least ${need - eq:,.2f} more USDC.\n")
+            print(f"  Run the full check:  python3 doctor.py --key-file wallet.key "
+                  f"--coin {args.coin} --notional {args.notional}\n")
             return 1
         if not args.yes:
             print(f"\n  This will place real post-only orders on {args.coin}.")
