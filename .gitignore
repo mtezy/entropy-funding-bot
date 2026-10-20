@@ -1,0 +1,28 @@
+# secrets — never commit
+*.key
+wallet.key
+*.pem
+.env
+.env.*
+secrets.json
+
+# local state
+notes/
+*.log
+*.json.tmp
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# scraped / recon artifacts
+http/
+js/
+
+# os
+.DS_Store
+Thumbs.db
