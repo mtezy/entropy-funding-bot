@@ -39,6 +39,15 @@ REQUIRE_HL_REFERRAL = False
 REQUIRE_ENTROPY_ACK = True
 
 
+def notes_path(name):
+    """Where scan/report JSON is written: $ENTROPY_NOTES_DIR or ./notes (gitignored)."""
+    import os
+    d = os.environ.get("ENTROPY_NOTES_DIR") or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "notes")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, name)
+
+
 def _box(lines, width=74):
     out = ["┌" + "─" * width + "┐"]
     for ln in lines:

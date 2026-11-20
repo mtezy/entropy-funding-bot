@@ -283,6 +283,26 @@ def main():
         except Exception:
             return hl.account_value()
 
+    def sizes():
+        pl = hl.position(args.long_coin)
+        ps = hl.position(args.short_coin)
+        return (float(pl["szi"]) if pl else 0.0, float(ps["szi"]) if ps else 0.0)
+
+    def close_legs():
+        """Reduce-only IOC both legs at their ACTUAL size. True once both are flat."""
+        for coin, aid, szd, mid in ((args.long_coin, aid_l, szd_l, L["mid"]),
+                                    (args.short_coin, aid_s, szd_s, S["mid"])):
+            p = hl.position(coin)
+            szi = float(p["szi"]) if p else 0.0
+            if szi:
+                buy = szi < 0
+                hl.order(aid, buy, mid * (1.004 if buy else 0.996), abs(szi),
+                         tif="Ioc", reduce_only=True, szd=szd)
+        ok_l, got_l = hl.verify_fill(args.long_coin, 0.0, tol=0.0)
+        ok_s, got_s = hl.verify_fill(args.short_coin, 0.0, tol=0.0)
+        print(f"       closed long {got_l:+.4f} short {got_s:+.4f}")
+        return ok_l and ok_s
+
     # ---- recover state: never stack a second position on an existing one ----
     if args.live:
         try:
@@ -357,8 +377,12 @@ def main():
                         continue
 
                     # leverage must be set before the first order on a fresh asset
-                    hl.set_leverage(aid_l, lev, is_cross=False)
-                    hl.set_leverage(aid_s, lev, is_cross=False)
+                    for aid in (aid_l, aid_s):
+                        lr = hl.set_leverage(aid, lev, is_cross=False)
+                        if not (isinstance(lr, dict) and lr.get("status") == "ok"):
+                            print(f"       ABORT: set leverage failed on {aid}: "
+                                  f"{json.dumps(lr)[:140]}")
+                            return 1
                     time.sleep(0.5)
 
                     # fire both legs as marketable IOC so they land together
@@ -369,17 +393,17 @@ def main():
                     print(f"       long : {json.dumps(r1)[:140]}")
                     print(f"       short: {json.dumps(r2)[:140]}")
 
-                    ok_l, got_l = hl.verify_fill(args.long_coin, qty_l)
-                    ok_s, got_s = hl.verify_fill(args.short_coin, -qty_s)
+                    ok_l, got_l = hl.verify_fill(args.long_coin, qty_l, tol=0.0)
+                    ok_s, got_s = hl.verify_fill(args.short_coin, -qty_s, tol=0.0)
                     if not (ok_l and ok_s):
                         print(f"       !! FILL MISMATCH long={got_l} short={got_s} "
                               f"(want {qty_l}/{-qty_s}) — unwinding")
-                        if got_l:
-                            hl.order(aid_l, False, L["mid"] * 0.99, abs(got_l),
-                                     tif="Ioc", reduce_only=True, szd=szd_l)
-                        if got_s:
-                            hl.order(aid_s, True, S["mid"] * 1.01, abs(got_s),
-                                     tif="Ioc", reduce_only=True, szd=szd_s)
+                        if not close_legs():
+                            # do not re-enter on top of a leftover leg: stay in
+                            # position mode so the exit path keeps flattening it
+                            print("       !! unwind incomplete — retrying as exit")
+                            in_pos, opened_at = True, time.time()
+                            entry_equity = equity()
                         time.sleep(args.poll)
                         continue
                     print(f"       filled long {got_l:+.4f} short {got_s:+.4f} "
@@ -401,6 +425,22 @@ def main():
             elif hours >= args.max_hours:
                 why = f"max hours {hours:.1f}"
 
+            if args.live:
+                try:
+                    szi_l, szi_s = sizes()
+                    if szi_l == 0 and szi_s == 0:
+                        print("       both legs already flat — back to scanning")
+                        in_pos, opened_at = False, None
+                        if args.poll <= 0:
+                            break
+                        time.sleep(args.poll)
+                        continue
+                    if szi_l == 0 or szi_s == 0 or szi_l < 0 or szi_s > 0:
+                        why = (f"legs unbalanced long={szi_l:+.4f} short={szi_s:+.4f} "
+                               f"(liquidated or partial fill?)")
+                except Exception as e:
+                    print(f"       WARN: could not read positions ({e})")
+
             if args.live and entry_equity is not None and args.max_dd_usd > 0:
                 dd = entry_equity - equity()
                 if dd > args.max_dd_usd:
@@ -409,16 +449,12 @@ def main():
 
             if why:
                 print(f"       <<< EXIT ({why}) after {hours:.1f}h")
-                if args.live:
-                    qty_l = round(args.notional / L["mid"], szd_l)
-                    qty_s = round(args.notional / S["mid"], szd_s)
-                    hl.order(aid_l, False, L["mid"] * 0.996, qty_l,
-                             tif="Ioc", reduce_only=True, szd=szd_l)
-                    hl.order(aid_s, True, S["mid"] * 1.004, qty_s,
-                             tif="Ioc", reduce_only=True, szd=szd_s)
-                    ok_l, got_l = hl.verify_fill(args.long_coin, 0.0, tol=0.05)
-                    ok_s, got_s = hl.verify_fill(args.short_coin, 0.0, tol=0.05)
-                    print(f"       closed long {got_l:+.4f} short {got_s:+.4f}")
+                if args.live and not close_legs():
+                    print("       !! exit incomplete — retrying next poll")
+                    if args.poll <= 0:
+                        return 2
+                    time.sleep(args.poll)
+                    continue
                 in_pos = False
                 opened_at = None
                 if risk.halted:
