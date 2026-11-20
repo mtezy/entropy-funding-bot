@@ -216,7 +216,7 @@ def main():
               f"| BID {bid_sz:.3f}@{bid_px:.1f}  ASK {ask_sz:.3f}@{ask_px:.1f}")
 
         if args.live:
-            hl.cancel_all(DEX, mkt.asset_id)
+            hl.cancel_all(DEX, mkt.asset_id, args.coin)
             time.sleep(0.15)
             hl.bulk_orders([
                 {"a": mkt.asset_id, "b": True,  "p": f"{bid_px}", "s": f"{bid_sz}",
@@ -228,6 +228,10 @@ def main():
         if args.once:
             break
         time.sleep(args.refresh)
+
+    if args.live:
+        print("cancelling resting quotes")
+        hl.cancel_all(DEX, mkt.asset_id, args.coin)
 
 
 if __name__ == "__main__":

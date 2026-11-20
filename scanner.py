@@ -30,6 +30,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from hl_client import HL
+from config import notes_path
 
 HOURS_YEAR = 24 * 365
 DEXES = ["", "io", "xyz", "para", "mkts"]
@@ -191,7 +192,7 @@ def main():
         print(json.dumps(rows[:args.limit], indent=1))
     else:
         show(rows, args.limit)
-    with open("/root/pentest/entropy/notes/scan_pairs.json", "w") as f:
+    with open(notes_path("scan_pairs.json"), "w") as f:
         json.dump(rows, f, indent=1)
 
 

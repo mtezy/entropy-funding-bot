@@ -16,6 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
+from config import notes_path
 
 INFO = "https://api.hyperliquid.xyz/info"
 S = requests.Session()
@@ -116,7 +117,7 @@ def main():
                 print(f"  {i+1}/{len(jobs)}", file=sys.stderr)
 
     rows.sort(key=lambda x: -x["score"])
-    json.dump(rows, open("/root/pentest/entropy/notes/scan.json", "w"), indent=1)
+    json.dump(rows, open(notes_path("scan.json"), "w"), indent=1)
     print(f"\nscanned {len(rows)} live books -> notes/scan.json\n")
 
     # ---- table: viable maker markets ----

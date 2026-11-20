@@ -13,6 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
+from config import notes_path
 
 INFO = "https://api.hyperliquid.xyz/info"
 S = requests.Session()
@@ -126,7 +127,7 @@ def main():
             verdict = "CANDIDATE"
         print(f"  {r['coin']:<16} {verdict}")
 
-    json.dump(rows, open("/root/pentest/entropy/notes/deepdive.json", "w"), indent=1)
+    json.dump(rows, open(notes_path("deepdive.json"), "w"), indent=1)
 
 
 if __name__ == "__main__":

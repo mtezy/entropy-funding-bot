@@ -58,6 +58,13 @@ SET_ABSTRACTION_TYPES = [
     {"name": "nonce", "type": "uint64"},
 ]
 
+APPROVE_BUILDER_FEE_TYPES = [
+    {"name": "hyperliquidChain", "type": "string"},
+    {"name": "maxFeeRate", "type": "string"},
+    {"name": "builder", "type": "address"},
+    {"name": "nonce", "type": "uint64"},
+]
+
 DEX_ABSTRACTION_TYPES = [
     {"name": "hyperliquidChain", "type": "string"},
     {"name": "user", "type": "address"},
@@ -86,6 +93,11 @@ def round_px(px, szd):
     # never let the decimal cap round a price away to zero — fall back to the
     # significant-figure rule alone, which is what the exchange checks first
     return out if out > 0 else px
+
+
+def builder_fee_rate(tenths_bps):
+    """Tenths of a bp -> Hyperliquid percent string: 10 -> '0.0100%' (1 bp)."""
+    return f"{tenths_bps / 100_000:.4%}"
 
 
 def round_sz(sz, szd):
@@ -184,14 +196,14 @@ class HL:
             self._dex_idx = {}
         if dex in self._dex_idx:
             return self._dex_idx[dex]
-        try:
-            lst = self.info({"type": "perpDexs"})
-            for i, x in enumerate(lst):
-                if x and x.get("name"):
-                    self._dex_idx[x["name"]] = i
-        except Exception:
-            pass
-        return self._dex_idx.get(dex, 0)
+        lst = self.info({"type": "perpDexs"})
+        for i, x in enumerate(lst):
+            if x and x.get("name"):
+                self._dex_idx[x["name"]] = i
+        if dex not in self._dex_idx:
+            # never guess: a wrong index routes the order to another dex's asset
+            raise RuntimeError(f"unknown builder dex {dex!r}")
+        return self._dex_idx[dex]
 
     def asset_id(self, dex, index):
         """Exchange asset id for asset `index` on `dex` ('' = main perps)."""
@@ -371,11 +383,12 @@ class HL:
         return self.post_action(
             {"type": "cancel", "cancels": [{"a": asset_id, "o": oid}]}, dry=dry)
 
-    def cancel_all(self, dex, asset_id, dry=False):
+    def cancel_all(self, dex, asset_id, coin, dry=False):
+        """Cancel every open order on `coin` (asset_id must be that coin's id)."""
         if dry or not self.acct:
             return {"dry": True, "note": "would cancel all"}
         oo = self.open_orders(dex)
-        cancels = [{"a": asset_id, "o": o["oid"]} for o in oo]
+        cancels = [{"a": asset_id, "o": o["oid"]} for o in oo if o.get("coin") == coin]
         if not cancels:
             return {"status": "ok", "note": "nothing to cancel"}
         return self.post_action({"type": "cancel", "cancels": cancels})
@@ -395,12 +408,26 @@ class HL:
 
     # -------------------------------------------------- builder fee / referral
     def approve_builder_fee(self, builder, max_fee_tenths_bps, dry=False):
-        """Main wallet must approve before a builder fee can be charged."""
-        return self.post_action({
+        """Main wallet must approve before a builder fee can be charged (user-signed)."""
+        nonce = int(time.time() * 1000)
+        action = {
             "type": "approveBuilderFee",
-            "maxFeeRate": f"{max_fee_tenths_bps / 10000:.4%}",
-            "builder": builder,
-        }, dry=dry)
+            "maxFeeRate": builder_fee_rate(max_fee_tenths_bps),
+            "builder": builder.lower(),
+            "nonce": nonce,
+            "signatureChainId": "0x66eee",
+            "hyperliquidChain": "Mainnet" if self.mainnet else "Testnet",
+        }
+        if dry or not self.acct:
+            return {"dry": True, "action": action}
+        sig = self._sign_user_action(action, APPROVE_BUILDER_FEE_TYPES,
+                                     "HyperliquidTransaction:ApproveBuilderFee")
+        body = {"action": action, "nonce": nonce, "signature": sig, "vaultAddress": None}
+        r = self.s.post(EXCHANGE_URL, json=body, timeout=self.timeout)
+        try:
+            return r.json()
+        except Exception:
+            return {"status": "parse_error", "code": r.status_code, "text": r.text[:400]}
 
     def set_referrer(self, code, dry=False):
         """Attach a referral code. User gets a fee discount; referrer earns a share."""

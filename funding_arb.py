@@ -14,6 +14,7 @@ import json
 import time
 
 import requests
+from config import notes_path
 
 INFO = "https://api.hyperliquid.xyz/info"
 S = requests.Session()
@@ -154,7 +155,7 @@ def main():
               f"{hs['avg']*HOURS_YEAR*100:>+7.0f}% (pos {hs['pos_pct']:.0f}%)")
         print(f"{'':10} -> persistent net APR {avg_net:+.0f}%   (snapshot said {r['net_apr']:+.0f}%)")
 
-    json.dump(rows, open("/root/pentest/entropy/notes/funding_arb.json", "w"), indent=1)
+    json.dump(rows, open(notes_path("funding_arb.json"), "w"), indent=1)
 
 
 if __name__ == "__main__":

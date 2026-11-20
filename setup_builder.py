@@ -41,7 +41,7 @@ import json
 import os
 import sys
 
-from hl_client import HL
+from hl_client import HL, builder_fee_rate
 
 
 def main():
@@ -61,7 +61,7 @@ def main():
         b = args.builder or "<YOUR_BUILDER_ADDRESS>"
         print(json.dumps({
             "type": "approveBuilderFee",
-            "maxFeeRate": f"{args.fee/10000:.4%}",
+            "maxFeeRate": builder_fee_rate(args.fee),
             "builder": b,
         }, indent=1))
         print(f"\nusers approve {args.fee/10:.1f} bps max. you charge "

@@ -15,6 +15,7 @@ import sys
 import time
 
 import requests
+from config import notes_path
 
 INFO = "https://api.hyperliquid.xyz/info"
 S = requests.Session()
@@ -100,4 +101,4 @@ if __name__ == "__main__":
               f"vol=${r['vol_usd']:>9,.0f}  hitBid={r['hit_bid']} hitAsk={r['hit_ask']}  "
               f"medTouch=${r['med_bid_usd']:,.0f}/${r['med_ask_usd']:,.0f}  "
               f"spread={r['med_spread_bps']:.1f}b", flush=True)
-    json.dump(out, open("/root/pentest/entropy/notes/live_sample.json", "w"), indent=1)
+    json.dump(out, open(notes_path("live_sample.json"), "w"), indent=1)
